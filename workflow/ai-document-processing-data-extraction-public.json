@@ -1,0 +1,530 @@
+{
+  "name": "AI Document Processing & Data Extraction",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "AI Document Processing",
+        "formDescription": "Upload a business document for automated data extraction and processing.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Document",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "745716a7-62c2-4d07-969b-5fb4fd3943e6",
+      "name": "AI Document Processing"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Document",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "61daed0b-5cac-42c3-b91a-d18e4b09997b",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(item => {\n  // OpenAI structured output is nested here\n  const invoice = item.json.output?.[0]?.content?.[0]?.text;\n\n  if (!invoice || typeof invoice !== 'object') {\n    return {\n      json: {\n        is_valid: false,\n        validation_status: 'Needs Review',\n        validation_errors: ['Structured invoice data was not found in the AI output']\n      }\n    };\n  }\n\n  const errors = [];\n\n  // Check required text fields\n  const requiredTextFields = [\n    'invoice_number',\n    'vendor_name',\n    'invoice_date',\n    'due_date',\n    'currency'\n  ];\n\n  for (const field of requiredTextFields) {\n    if (!invoice[field] || String(invoice[field]).trim() === '') {\n      errors.push(`Missing required field: ${field}`);\n    }\n  }\n\n  // Check monetary values\n  if (typeof invoice.subtotal !== 'number') {\n    errors.push('Subtotal is missing or invalid');\n  }\n\n  if (typeof invoice.tax !== 'number') {\n    errors.push('Tax is missing or invalid');\n  }\n\n  if (typeof invoice.total !== 'number') {\n    errors.push('Total is missing or invalid');\n  }\n\n  // Check invoice arithmetic: subtotal + tax = total\n  if (\n    typeof invoice.subtotal === 'number' &&\n    typeof invoice.tax === 'number' &&\n    typeof invoice.total === 'number'\n  ) {\n    const calculatedTotal =\n      Math.round((invoice.subtotal + invoice.tax) * 100) / 100;\n\n    const statedTotal =\n      Math.round(invoice.total * 100) / 100;\n\n    if (calculatedTotal !== statedTotal) {\n      errors.push(\n        `Total mismatch: subtotal + tax = ${calculatedTotal}, but invoice total = ${statedTotal}`\n      );\n    }\n  }\n\n  // Check line items\n  if (!Array.isArray(invoice.line_items) || invoice.line_items.length === 0) {\n    errors.push('No invoice line items were extracted');\n  }\n\n  return {\n    json: {\n      ...invoice,\n      is_valid: errors.length === 0,\n      validation_status:\n        errors.length === 0 ? 'Valid' : 'Needs Review',\n      validation_errors: errors\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        16
+      ],
+      "id": "59b02c7b-abac-44c3-a0d0-57f73a944048",
+      "name": "Validate Invoice Data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "275611c1-17a6-4d68-a334-7d24ee4a64ff",
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1024,
+        16
+      ],
+      "id": "8a578219-9fe6-49bf-9758-576ddd1ae58f",
+      "name": "Is Invoice Valid?"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=You are an invoice data extraction assistant.\n\nExtract structured information from the invoice text provided below.\n\nReturn ONLY valid JSON. Do not include markdown, explanations, or code fences.\n\nUse exactly this structure:\n\n{\n  \"invoice_number\": \"\",\n  \"vendor_name\": \"\",\n  \"invoice_date\": \"\",\n  \"due_date\": \"\",\n  \"currency\": \"\",\n  \"purchase_order\": \"\",\n  \"subtotal\": 0,\n  \"tax\": 0,\n  \"total\": 0,\n  \"line_items\": [\n    {\n      \"description\": \"\",\n      \"quantity\": 0,\n      \"unit_price\": 0,\n      \"amount\": 0\n    }\n  ]\n}\n\nRules:\n- Extract values only from the provided invoice.\n- Do not invent missing information.\n- If a text field is missing, return an empty string.\n- If a numeric field is missing, return 0.\n- Return monetary values as numbers without currency symbols.\n- Preserve all invoice line items that can be identified.\n- Use YYYY-MM-DD for dates when the date can be determined.\n- Return only the JSON object.\n\nINVOICE TEXT:\n\n{{ $json.text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_schema",
+              "name": "invoice_extraction",
+              "schema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"invoice_number\": {\n      \"type\": \"string\"\n    },\n    \"vendor_name\": {\n      \"type\": \"string\"\n    },\n    \"invoice_date\": {\n      \"type\": \"string\"\n    },\n    \"due_date\": {\n      \"type\": \"string\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"purchase_order\": {\n      \"type\": \"string\"\n    },\n    \"subtotal\": {\n      \"type\": \"number\"\n    },\n    \"tax\": {\n      \"type\": \"number\"\n    },\n    \"total\": {\n      \"type\": \"number\"\n    },\n    \"line_items\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"description\": {\n            \"type\": \"string\"\n          },\n          \"quantity\": {\n            \"type\": \"number\"\n          },\n          \"unit_price\": {\n            \"type\": \"number\"\n          },\n          \"amount\": {\n            \"type\": \"number\"\n          }\n        },\n        \"required\": [\n          \"description\",\n          \"quantity\",\n          \"unit_price\",\n          \"amount\"\n        ],\n        \"additionalProperties\": false\n      }\n    }\n  },\n  \"required\": [\n    \"invoice_number\",\n    \"vendor_name\",\n    \"invoice_date\",\n    \"due_date\",\n    \"currency\",\n    \"purchase_order\",\n    \"subtotal\",\n    \"tax\",\n    \"total\",\n    \"line_items\"\n  ],\n  \"additionalProperties\": false\n}",
+              "description": "Structured invoice data extracted from the supplied invoice document.",
+              "strict": true
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        432,
+        16
+      ],
+      "id": "99cc89eb-ca4c-493e-8c32-e8bc9d238c81",
+      "name": "Extract Invoice Data with AI"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Append Row in Sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invoice_number": "={{ $json.invoice_number }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "currency": "={{ $json.currency }}",
+            "due_date": "={{ $json.due_date }}",
+            "purchase_order": "={{ $json.purchase_order }}",
+            "subtotal": "={{ $json.subtotal }}",
+            "tax": "={{ $json.tax }}",
+            "total": "={{ $json.total }}",
+            "line_items": "={{ JSON.stringify($json.line_items) }}",
+            "validation_status": "={{ $json.validation_status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "purchase_order",
+              "displayName": "purchase_order",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subtotal",
+              "displayName": "subtotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tax",
+              "displayName": "tax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total",
+              "displayName": "total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "line_items",
+              "displayName": "line_items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_status",
+              "displayName": "validation_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        -80
+      ],
+      "id": "b997d5b5-2ca4-4bc4-aac9-23063c031751",
+      "name": "Save Valid Invoice"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Append Row in Sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 892447989,
+          "mode": "list",
+          "cachedResultName": "Human Review Queue"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invoice_number": "={{ $json.invoice_number }}",
+            "vendor_name": "={{ $json.vendor_name }}",
+            "invoice_date": "={{ $json.invoice_date }}",
+            "due_date": "={{ $json.due_date }}",
+            "currency": "={{ $json.currency }}",
+            "purchase_order": "={{ $json.purchase_order }}",
+            "subtotal": "={{ $json.subtotal }}",
+            "tax": "={{ $json.tax }}",
+            "total": "={{ $json.total }}",
+            "line_items": "={{ JSON.stringify($json.line_items) }}",
+            "validation_status": "={{ $json.validation_status }}",
+            "validation_errors": "={{ $json.validation_errors.join('; ') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_name",
+              "displayName": "vendor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "purchase_order",
+              "displayName": "purchase_order",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subtotal",
+              "displayName": "subtotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tax",
+              "displayName": "tax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total",
+              "displayName": "total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "line_items",
+              "displayName": "line_items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_status",
+              "displayName": "validation_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "validation_errors",
+              "displayName": "validation_errors",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        112
+      ],
+      "id": "cb068dc9-51a3-468f-9974-fba1c6742426",
+      "name": "Save to Human Review Queue"
+    },
+    {
+      "parameters": {
+        "sendTo": "review-team@example.com",
+        "subject": "=⚠️ Invoice Requires Human Review - {{ $json.invoice_number }}",
+        "message": "=<h2>⚠️ Invoice Requires Human Review</h2>\n\n<p>An invoice failed automated validation and requires manual review.</p>\n\n<h3>Invoice Details</h3>\n\n<p>\n<strong>Invoice Number:</strong> {{ $json.invoice_number }}<br>\n<strong>Vendor:</strong> {{ $json.vendor_name }}<br>\n<strong>Invoice Date:</strong> {{ $json.invoice_date }}<br>\n<strong>Due Date:</strong> {{ $json.due_date }}<br>\n<strong>Purchase Order:</strong> {{ $json.purchase_order }}<br>\n<strong>Currency:</strong> {{ $json.currency }}\n</p>\n\n<h3>Financial Details</h3>\n\n<p>\n<strong>Subtotal:</strong> {{ $json.subtotal }}<br>\n<strong>Tax:</strong> {{ $json.tax }}<br>\n<strong>Invoice Total:</strong> {{ $json.total }}\n</p>\n\n<h3>⚠️ Validation Error</h3>\n\n<p>\n{{ $json.validation_errors }}\n</p>\n\n<hr>\n\n<p>\n<strong>Human Review Required:</strong><br>\nThis invoice was not automatically approved because it failed validation.\nReview the original document and extracted data before taking further action.\n</p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        112
+      ],
+      "id": "2637ce49-a781-4fca-b2b2-bdd288304dcd",
+      "name": "Send Human Review Alert"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "AI Document Processing": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Extract Invoice Data with AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Invoice Data": {
+      "main": [
+        [
+          {
+            "node": "Is Invoice Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Invoice Data with AI": {
+      "main": [
+        [
+          {
+            "node": "Validate Invoice Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Invoice Valid?": {
+      "main": [
+        [
+          {
+            "node": "Save Valid Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save to Human Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Human Review Queue": {
+      "main": [
+        [
+          {
+            "node": "Send Human Review Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
